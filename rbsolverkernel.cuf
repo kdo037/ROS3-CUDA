@@ -1,0 +1,1962 @@
+ATTRIBUTES(GLOBAL) SUBROUTINE RBSOLVERKERNEL( ISCHAN_D, NUMCELLS_D, BLKSIZE_D, NUMB_MECH_SPC_D, NCS2_D, NCSP_D, NCS_D, NUSERAT_D, NRXNS_D, NKUSERAT_D,  &
+        NREACT_D, MXRCT_D, MXPRD_D, IRM2_D, NPRDCT_D, YDOT_D, RXRAT_D, RKI_D, YIN_D, SC_D,                      &
+        IARRAY_D, MXARRAY_D, NDERIVP_D, JARRP_D, JPIAL_D, ICOEFF_D, MXRP_D, NDERIVL_D, JARRL_D, JLIAL_D,        &
+        MXRR_D, CC2_D, JZLO_D, MXCOUNT2_D, IDEC1LO_D, IDEC1HI_D, IJDECA_D, IJDECB_D, IKDECA_D, IKDECB_D,        &
+        KJDECA_D, KJDECB_D, JARRAYPT_D, JHIZ1_D, JHIZ2_D, JZEROA_D, JZEROB_D, VDIAG_D, KZHI0_D, KZERO_D,        &
+        KZLO1_D, KZHI1_D, KZLO2_D, KZILCH_D, MZHI0_D, MZHI1_D, MZLO2_D, MZILCH_D, N_SPEC_D, MZLO1_D,            &
+        RHS_D, LORDERING_D, MXCELLS_D, OFFSET_D, ATOL_D, RTOL_D, ERRMX2_D, TEND_D, TNOW_D, DT_D,                &
+        GDTINV_D, RGAM_D, CHEMSTEP_D, DTINV_D, IDIAGBEG_D, K1_D, K2_D, K3_D, YP_D, C21_D, C31_D, C32_D,         &
+        B1_D, B2_D, B3_D, ERR_D, D1_D, D2_D, D3_D, X1_D, X2_D,                                                  &
+        MAXERR_D, OLDERR_D, MAX_SPC_ERR_D, UROUND_D, RNSPEC_D, DTFAC_D, GROW_D, CONMIN_D, LPASS_D, FACMIN_D,    & 
+        FACMAX_D, FACONE_D, DTMAX_D, DTMIN_D )
+
+    IMPLICIT NONE
+    !##################### RBFEVAL VARIABLES ###########################
+    INTEGER :: ISCHAN_D
+    INTEGER :: NUMCELLS_D
+    INTEGER :: BLKSIZE_D
+    INTEGER :: NUMB_MECH_SPC_D
+    INTEGER :: NCS2_D
+    INTEGER :: NCSP_D
+    INTEGER :: NCS_D
+    INTEGER :: NUSERAT_D( NCS2_D )
+    INTEGER :: NRXNS_D
+    INTEGER :: NKUSERAT_D( NRXNS_D, NCS2_D )
+    INTEGER :: NREACT_D( NRXNS_D )
+    INTEGER :: MXRCT_D
+    INTEGER :: MXPRD_D
+    INTEGER :: IRM2_D( NRXNS_D,MXRCT_D+MXPRD_D,NCS2_D )
+    INTEGER :: NPRDCT_D( NRXNS_D )
+
+    REAL( 8 ) :: YDOT_D( 8000, NUMB_MECH_SPC_D )
+    REAL( 8 ) :: RXRAT_D( BLKSIZE_D, NRXNS_D )
+    REAL( 8 ) :: RKI_D( 8000, 748 )
+    REAL( 8 ) :: YIN_D( 8000, NUMB_MECH_SPC_D )
+    REAL :: SC_D( NRXNS_D, MXPRD_D ) !stoichiometric coefficient
+
+    ! DEBUG
+    REAL( 8 ) :: YDOTDEB_D( NUMCELLS_D, NUMB_MECH_SPC_D )    ! Species rates of change, ppm/min
+    integer count_d
+    real( 8 ) :: debug_d
+
+    ! LOCAL VARIABLES
+    INTEGER ISP_D            ! Loop index for species
+    INTEGER ISP1_D, ISP2_D, ISP3_D ! Pointers to species numbers
+    INTEGER NCELL_D            ! Loop index for number of cells
+    INTEGER NP_D               ! Loop index for number of products
+    INTEGER NR_D               ! Loop index for number of reactants
+    INTEGER NRK_D              ! Reaction number
+    INTEGER NRX_D              ! Loop index for number of reactions
+    INTEGER IX, IY, IZ
+    !##################### RBFEVAL VARIABLES ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! GLOBAL VARIABLES
+    LOGICAL :: LORDERING_D            ! Flag for reordering
+
+    INTEGER MXCELLS_D
+    INTEGER OFFSET_D !local variables of rbsolvers             ! Cell offset for blcock
+
+    REAL( 8 ) :: ATOL_D( NUMB_MECH_SPC_D )
+    REAL( 8 ) :: RTOL_D( NUMB_MECH_SPC_D )
+    REAL( 8 ) :: ERRMX2_D( MXCELLS_D )
+    REAL( 8 ) :: TEND_D   !local variables of rbsolvers         ! Elapsed time at end of integration step
+    REAL( 8 ) :: TNOW_D   !local variables of rbsolvers         ! Elapsed time at start of integration step
+    REAL( 8 ) :: DT_D     !local variables of rbsolvers         ! Time step
+    REAL( 8 ) :: GDTINV_D         ! Inverse of gamma x time step
+    REAL( 8 ) :: RGAM_D           !PARAMETER
+    REAL( 8 ) :: CHEMSTEP_D      ! Chem integration interval (min)
+
+    ! LOCAL VARIABLES
+    INTEGER JSPC_D
+    INTEGER YLOWEPS_D
+    REAL( 8 ) :: ERRYMAX_D        ! Cell/species stiffness estimate
+    REAL( 8 ) :: DTINV_D          ! Inverse of time step
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## RBJACOB ###########################
+    ! GLOBAL VARIABLES
+    ! INTEGER NCS2_D
+    INTEGER IARRAY_D(  NCS2_D ) ! No. of PD terms in I-hJ matrix
+    ! INTEGER ISCHAN_D
+    ! INTEGER NUMCELLS_D
+    ! INTEGER BLKSIZE_D
+    INTEGER MXARRAY_D
+    ! INTEGER NUSERAT_D( NCS2_D )
+    ! INTEGER NCSP_D
+    ! INTEGER NREACT_D( NRXNS_D )
+    ! INTEGER NRXNS_D
+    ! INTEGER MXRCT_D
+    ! INTEGER MXPRD_D
+    ! INTEGER IRM2_D( NRXNS_D,MXRCT_D+MXPRD_D,NCS2_D )
+    INTEGER NDERIVP_D( NRXNS_D, 2 ) ! NRXNS = 748
+    INTEGER JARRP_D( NRXNS_D,MXRP_D,NCS2_D )
+    INTEGER JPIAL_D( NRXNS_D,MXRP_D,NCS2_D )
+    INTEGER ICOEFF_D( NRXNS_D,MXRP_D,NCS2_D )
+    ! INTEGER NUMB_MECH_SPC_D
+    INTEGER MXRP_D
+    ! INTEGER NKUSERAT_D( NRXNS_D, NCS2_D )
+    INTEGER NDERIVL_D ( NRXNS_D,NCS2_D )
+    INTEGER JARRL_D( NRXNS_D,MXRR_D,NCS2_D )
+    INTEGER JLIAL_D( NRXNS_D,MXRR_D,NCS2_D )
+    INTEGER MXRR_D
+    ! INTEGER NCS_D
+
+    REAL( 8 ) :: CC2_D( BLKSIZE_D,0:MXARRAY_D )
+    ! REAL( 8 ) :: RKI_D( 8000, 748 )
+    ! REAL( 8 ) :: YIN_D( 8000, NUMB_MECH_SPC_D )
+    ! REAL :: SC_D( NRXNS_D, MXPRD_D ) !stoichiometric coefficient
+
+    ! LOCAL VARIABLES
+    INTEGER IALP_D           ! Pointer to location of PD term in EXPLIC
+    INTEGER IAR_D            ! Loop index for non-zero entries in [P]
+    INTEGER IARP_D           ! Pointer to location of PD term in [P]
+    INTEGER IARRY_D          ! Pointer to end of [P] entries
+    INTEGER ISCP_D           ! Pointer to stoichiometric coefficient
+    INTEGER ISPC_D           ! Loop index for species
+    INTEGER JR1_D, JR2_D, JR3_D  ! Pointer to reactant species conc.
+    ! INTEGER NCELL_D          ! Loop index for number of cells
+    INTEGER NL_D             ! Loop index for loss PD terms
+    INTEGER NLD_D            ! Number of loss PD terms for each rxn.
+    ! INTEGER NP_D             ! Loop index for prod PD terms
+    INTEGER NPD_D            ! Number of prod PD terms for each rxn.
+    ! INTEGER NRK_D            ! Reaction number
+    ! INTEGER NRX_D            ! Loop index for number of reactions
+    INTEGER NONDIAG_D        ! Pointer to end of off-diagonal entries
+    INTEGER NONDIAG1_D       ! Pointer to start of diagonal entries
+
+    REAL( 8 ) :: CR2_D                   ! Temporary product for 3 reactant rxns
+    REAL( 8 ) :: FRACN_D                 ! Stoichiometric coeff. times b*h
+    REAL( 8 ) :: EXPLIC_D( 8000,3 )   ! Reaction partial derivative terms
+    !########################## RBJACOB ###########################
+
+    !########################## UPDATE AFTER RBJACOB ###########################
+    INTEGER IDIAGBEG_D    ! Index of diagonal start in Jac array
+    !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## RBDECOMP ###########################
+    ! GLOBAL VARIABLLES
+    ! INTEGER NCSP_D
+    ! INTEGER NCS2_D
+    INTEGER JZLO_D( NCS2_D ) ! NOTE THIS DIM
+    ! INTEGER ISCHAN_D
+    ! INTEGER NUMB_MECH_SPC_D
+    INTEGER MXCOUNT2_D
+    INTEGER IDEC1LO_D( NUMB_MECH_SPC_D, NCS2_D )
+    INTEGER IDEC1HI_D( NUMB_MECH_SPC_D, NCS2_D )
+    INTEGER IJDECA_D( MXCOUNT2_D )
+    INTEGER IJDECB_D( MXCOUNT2_D )
+    INTEGER IKDECA_D( MXCOUNT2_D )
+    INTEGER IKDECB_D( MXCOUNT2_D )
+    INTEGER KJDECA_D( MXCOUNT2_D )
+    INTEGER KJDECB_D( MXCOUNT2_D )
+    ! INTEGER NUMCELLS_D
+    ! INTEGER MXARRAY_D
+    INTEGER JARRAYPT_D( NUMB_MECH_SPC_D, NUMB_MECH_SPC_D, NCS2_D )
+    INTEGER JHIZ1_D( NUMB_MECH_SPC_D, NCS2_D )
+    INTEGER JHIZ2_D( NUMB_MECH_SPC_D, NCS2_D )
+    INTEGER JZEROA_D( MXARRAY_D )
+    INTEGER JZEROB_D( MXARRAY_D )
+    ! INTEGER BLKSIZE_D
+
+    ! REAL( 8 ) :: CC2_D( BLKSIZE_D,0:MXARRAY_D )
+    REAL( 8 ) :: VDIAG_D( BLKSIZE_D, NUMB_MECH_SPC_D )
+
+    ! LOCAL VARIABLES
+    ! INTEGER IAR_D             ! Pointer to diagonal terms
+    INTEGER IC_D              ! Loop index for ops in decomp loop 1
+    INTEGER IDLO_D            ! Start index for decomp loop 1
+    INTEGER IDHI_D            ! End index for decomp loop 1
+    ! INTEGER IJ0_D             ! Pointer to ij term 1 in decomp loop 1
+    ! INTEGER IJ1_D             ! Pointer to ij term 2 in decomp loop 1
+    INTEGER IJA_D             ! Pointer to ij term 1 in decomp loop 2
+    INTEGER IJB_D             ! Pointer to ij term 2 in decomp loop 2
+    INTEGER IK0_D             ! Pointer to ik term 1 in decomp loop 1
+    INTEGER IK1_D             ! Pointer to ik term 2 in decomp loop 1
+    ! INTEGER J_D               ! Loop index for number of species
+    INTEGER JC_D              ! Loop index for ops in decomp loop 2
+    INTEGER JHI1_D            ! End index for 2-term decomp loop 2
+    INTEGER JHI2_D            ! End index for 1-term decomp loop 2
+    INTEGER JLO1_D            ! Start index for 2-term decomp loop 2
+    INTEGER JLO2_D            ! Start index for 1-term decomp loop 2
+    INTEGER KJ0_D             ! Pointer to kj term 1 in decomp loop 1
+    INTEGER KJ1_D             ! Pointer to kj term 2 in decomp loop 1
+    ! INTEGER NCELL_D           ! Loop index for number of cells 
+    !########################## RBDECOMP ###########################
+
+    !########################## UPDATE RBDECOMP CODE ###########################
+    ! LOCAL VARIABLES
+    INTEGER N_D
+    !########################## END UPDATE RBDECOMP CODE ###########################
+
+    !########################## RBSOLVE ###########################
+    ! GLOBAL VARIABLES
+    ! INTEGER ISCHAN_D
+    INTEGER KZHI0_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER KZERO_D( MXARRAY_D,NCS2_D )
+    ! INTEGER NUMCELLS_D
+    INTEGER KZLO1_D( NUMB_MECH_SPC_D,NCS2_D )
+    ! INTEGER NCSP_D
+    INTEGER KZHI1_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER KZLO2_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER KZILCH_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER MZHI0_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER MZHI1_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER MZLO2_D( NUMB_MECH_SPC_D,NCS2_D )
+    INTEGER MZILCH_D( NUMB_MECH_SPC_D,NCS2_D )
+    ! INTEGER NUMB_MECH_SPC_D
+    ! INTEGER NCS2_D
+    ! INTEGER MXARRAY_D
+    ! INTEGER BLKSIZE_D
+    INTEGER N_SPEC_D
+    INTEGER MZLO1_D( NUMB_MECH_SPC_D,NCS2_D )
+
+    REAL( 8 ) :: RHS_D( BLKSIZE_D,N_SPEC_D ) ! NOTE CHANGE THIS WHEN PUT TOGETHER. RHS IS K1, K2, AND K3 IN RBSOLVER
+    REAL( 8 ) :: K1_D( BLKSIZE_D,N_SPEC_D )
+    REAL( 8 ) :: K2_D( BLKSIZE_D,N_SPEC_D )
+    REAL( 8 ) :: K3_D( BLKSIZE_D,N_SPEC_D )
+    ! REAL( 8 ) :: CC2_D( BLKSIZE_D,0:MXARRAY_D )
+    ! REAL( 8 ) :: VDIAG_D( BLKSIZE_D, NUMB_MECH_SPC_D )
+
+    ! LOCAL VARIABLES
+    INTEGER I_D                        ! Loop index for number of species
+    INTEGER IJ_D                       ! Counter of # of terms summed
+    INTEGER IJ0_D, IJ1_D, IJ2_D,    &           ! Pointers to location of ij entries in
+            IJ3_D, IJ4_D                 ! decomposed matrix
+    INTEGER J_D, J1_D, J2_D, J3_D, J4_D        ! Pointers to species # for dc/dt
+    INTEGER JZ_D                       ! Loop index inner backsub loops
+    ! INTEGER NCELL_D                    ! Loop index for number of cells
+    !########################## RBSOLVE ###########################
+
+    !########################## UPDATE RBSOLVE ###########################
+    REAL( 8 ) :: YP_D( 8000, NUMB_MECH_SPC_D )
+    !########################## END UPDATE RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! GLOBAL VARIABLES
+    REAL( 8 ) :: C21_D
+    ! LOCAL VARIABLES
+    REAL( 8 ) :: X1_D         ! Temp ROS3 variables
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER SOLVE ###########################
+    ! GLOBAL VARIABLES
+    REAL( 8 ) :: C31_D
+    REAL( 8 ) :: C32_D
+    ! LOCAL VARIABLES
+    REAL( 8 ) :: X2_D         ! Temp ROS3 variables
+    !########################## END UPDATE AFTER SOLVE ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    !c..final solution
+    REAL( 8 ) :: B1_D
+    REAL( 8)  :: B2_D
+    REAL( 8 ) :: B3_D
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! GLOBAL VARIABLES
+    REAL( 8 ) :: ERR_D( BLKSIZE_D )      ! Error est for each cell
+    REAL( 8 ) :: D1_D
+    REAL( 8 ) :: D2_D
+    REAL( 8 ) :: D3_D
+    ! LOCAL VARIABLES
+    REAL( 8 ) :: YTOL_D           ! Species tolerance
+    !########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    !########################## ESTIMATEING ERROR ###########################
+    REAL( 8 ) :: MAXERR_D         ! Max of cell error estimates
+    REAL( 8 ) :: OLDERR_D         ! OLD max error 
+    REAL( 8 ) :: MAX_SPC_ERR_D    ! species error in the cell
+    REAL( 8 ) :: UROUND_D         ! Roundoff parameter
+    REAL( 8 ) :: RNSPEC_D   ! Recipricol of # of species
+    REAL( 8 ) :: DTFAC_D          ! Time step scale factor
+    REAL( 8 ) :: GROW_D
+    REAL( 8 ) :: CONMIN_D
+    LOGICAL :: LPASS_D               ! Flag for convergence achieved
+    REAL( 8 ) :: FACMIN_D
+    REAL( 8 ) :: FACMAX_D
+    REAL( 8 ) :: FACONE_D
+    REAL( 8 ) :: DTMAX_D
+    REAL( 8 ) :: DTMIN_D
+    !########################## END ESTIMATING ERROR ###########################
+
+    IX = BLOCKDIM%X * (BLOCKIDX%X - 1) + THREADIDX%X
+    IY = BLOCKIDX%Y
+
+    !##################### START RBFEVAL CODE ###########################
+    DO ISP_D = 1, ISCHAN_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            YDOT_D( IX, ISP_D ) = 0.0D0
+        END IF
+    END DO
+ 
+    ! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    ! c  Loop over reactions to calculate dc/dt
+    ! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+    DO NRX_D = 1, NUSERAT_D( NCS2_D )
+    ! if (iz <= NUSERAT_D( NCS2_D )) then
+        NRK_D = NKUSERAT_D( NRX_D,NCSP_D )
+        ! IF (IX .EQ. 1) THEN
+        !     PRINT *, 'NRK_D OF 1', NRK_D
+        ! ELSE IF (IX .EQ. 2) THEN
+        !     PRINT *, 'NRK_D OF 2', NRK_D
+        ! END IF
+    ! c..Calculate reaction rate
+        IF ( NREACT_D( NRK_D ) .EQ. 1 ) THEN
+            ISP1_D = IRM2_D( NRK_D, 1, NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YIN_D( IX,ISP1_D )
+            END IF
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 2 ) THEN
+            ISP1_D = IRM2_D( NRK_D,1,NCS_D )
+            ISP2_D = IRM2_D( NRK_D,2,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YIN_D( IX,ISP1_D )    &
+                                    * YIN_D( IX,ISP2_D ) 
+            END IF
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 3 ) THEN
+            ISP1_D = IRM2_D( NRK_D,1,NCS_D )
+            ISP2_D = IRM2_D( NRK_D,2,NCS_D )
+            ISP3_D = IRM2_D( NRK_D,3,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YIN_D( IX,ISP1_D )    &
+                                    * YIN_D( IX,ISP2_D )    &
+                                    * YIN_D( IX,ISP3_D )
+            END IF 
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 0 ) THEN
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )
+            END IF
+        END IF
+        
+    ! c..Subtract loss terms from dc/dt for this reaction 
+        DO NR_D = 1, NREACT_D( NRK_D )
+        ! if (iy <= NREACT_D(NRK_D)) then
+            ISP1_D = IRM2_D( NRK_D,NR_D,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                YDOT_D( IX,ISP1_D ) = YDOT_D( IX,ISP1_D )   &
+                                    - RXRAT_D( IX,NRK_D )
+            END IF
+        END DO
+
+    ! c..Add production terms to dc/dt for this reaction
+        DO NP_D = 1, NPRDCT_D( NRK_D )
+        ! if (iy <= NPRDCT_D( NRK_D )) then
+            ISP1_D = IRM2_D( NRK_D,NP_D+3,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                YDOT_D( IX,ISP1_D ) = YDOT_D( IX,ISP1_D )   &
+                                    + SC_D( NRK_D,NP_D ) * RXRAT_D( IX,NRK_D )
+            END IF
+        END DO
+    END DO
+    !##################### END RBFEVAL CODE ###########################
+
+    !##################### START UPDATE RBFEVAL CODE ###########################
+    IF ( LORDERING_D ) THEN
+        DO JSPC_D = 1, ISCHAN_D  
+            YLOWEPS_D = ATOL_D( JSPC_D ) / ( MIN( RTOL_D( JSPC_D ), 0.003D+00 ) )
+            IF ( IX <= NUMCELLS_D ) THEN
+                ERRYMAX_D  = YDOT_D( IX,JSPC_D )                          &
+                        / ( YIN_D( IX,JSPC_D ) + YLOWEPS_D )                          ! NOTE YIN IS Y
+                ERRMX2_D( OFFSET_D + IX ) = ERRMX2_D( OFFSET_D + IX )     &
+                                        + ERRYMAX_D * ERRYMAX_D
+            END IF
+        END DO
+
+        ! RETURN
+
+    END IF
+
+    TEND_D = TNOW_D + DT_D 
+!  if (ix == 1) then
+!     print *, 'TNOW_D', TNOW_D
+!     print *, 'DT_D', DT_D
+!     print *, 'TEND_D', TEND_D
+!  end if
+
+    IF ( TEND_D .GT. CHEMSTEP_D ) THEN
+        DT_D = CHEMSTEP_D - TNOW_D
+        TEND_D = CHEMSTEP_D
+        ! if (ix == 1) then
+        !     print *, 'TNOW_D', TNOW_D
+        !     print *, 'CHEMSTEP_D', CHEMSTEP_D
+        !     print *, 'TEND_D', TEND_D
+        ! end if
+    END IF    
+
+    DTINV_D = 1.0D+00 / DT_D
+
+    GDTINV_D = DTINV_D * RGAM_D
+!  if (ix == 1) then
+!     print *, 'DTINV_D', DTINV_D
+!     print *, 'RGAM_D', RGAM_D
+!     print *, 'GDTINV_D', GDTINV_D
+! end if
+    !##################### END UPDATE RBFEVAL CODE ###########################
+
+    !########################## START RBJACOB CODE ###########################
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Zero out Jacobian ( stored in sparse matrix array cc2 )
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    IARRY_D = IARRAY_D( NCSP_D ) 
+    NONDIAG_D = IARRY_D - ISCHAN_D  
+    NONDIAG1_D = NONDIAG_D + 1
+
+    DO IAR_D = 0, NONDIAG_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            CC2_D( IX,IAR_D ) = 0.0D0
+        END IF
+    END DO
+    DO IAR_D = NONDIAG1_D, IARRY_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            CC2_D( IX,IAR_D ) = 0.0D0
+        END IF
+    END DO
+
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Loop over reaction rates adding partial derivative terms; EXPLIC
+! c  holds the PD terms according to number of reactants
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    DO 240 NRX_D = 1, NUSERAT_D( NCSP_D )
+
+        NRK_D = NKUSERAT_D( NRX_D,NCSP_D )
+        
+! c...partial derivative term for reactions with 1 reactant
+        IF ( NREACT_D( NRK_D ) .EQ. 1 ) THEN
+            IF ( IX <= NUMCELLS_D ) THEN
+                EXPLIC_D( IX,1 ) = RKI_D( IX,NRK_D ) 
+            END IF
+
+! c...partial derivative terms for reactions with 2 reactants
+            ELSE IF ( NREACT_D( NRK_D ) .EQ. 2 ) THEN
+                JR1_D = IRM2_D( NRK_D,1,NCS_D )
+                JR2_D = IRM2_D( NRK_D,2,NCS_D )
+                IF ( IX <= NUMCELLS_D ) THEN
+                    EXPLIC_D( IX,1 )  = RKI_D( IX,NRK_D )       &
+                                        * YIN_D( IX,JR2_D )    
+                    EXPLIC_D( IX,2 )  = RKI_D( IX,NRK_D )       &
+                                        * YIN_D( IX,JR1_D )
+                END IF
+
+! c.....partial derivative terms for reactions with 3 reactants
+            ELSE IF ( NREACT_D( NRK_D ) .EQ. 3 ) THEN
+                JR1_D = IRM2_D( NRK_D,1,NCS_D )
+                JR2_D = IRM2_D( NRK_D,2,NCS_D )
+                JR3_D = IRM2_D( NRK_D,3,NCS_D )
+                IF ( IX <= NUMCELLS_D ) THEN
+                    CR2_D = RKI_D( IX,NRK_D ) * YIN_D( IX,JR2_D )
+                    EXPLIC_D( IX,1 ) = CR2_D * YIN_D( IX,JR3_D )
+                    EXPLIC_D( IX,2 ) = RKI_D( IX,NRK_D )           &
+                                       * YIN_D( IX,JR1_D )         &
+                                       * YIN_D( IX,JR3_D ) 
+                    EXPLIC_D( IX,3 ) = CR2_D * YIN_D( IX,JR1_D )
+                END IF
+        END IF
+
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Add PD terms to [J] for this reaction
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c...loss terms
+        NLD_D = NDERIVL_D( NRK_D,NCSP_D )         
+        DO NL_D = 1, NLD_D
+            IARP_D = JARRL_D( NRK_D,NL_D,NCSP_D )
+            IALP_D = JLIAL_D( NRK_D,NL_D,NCSP_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                CC2_D( IX,IARP_D ) = CC2_D( IX,IARP_D ) - EXPLIC_D( IX,IALP_D ) 
+            END IF
+        END DO    ! End loop over loss terms
+
+! c...production terms with stoichiomteric coeff EQ 1.0 and NE 1.0
+        NPD_D = NDERIVP_D( NRK_D,NCSP_D )
+        DO 220 NP_D = 1, NPD_D
+
+        IARP_D = JARRP_D( NRK_D,NP_D,NCSP_D )
+        IALP_D = JPIAL_D( NRK_D,NP_D,NCSP_D )
+
+        IF ( ICOEFF_D( NRK_D,NP_D,NCSP_D ) .EQ. 0 ) THEN
+! c..production terms with unit stoichiometry
+            IF ( IX <= NUMCELLS_D ) THEN
+                CC2_D( IX,IARP_D ) = CC2_D( IX,IARP_D ) + EXPLIC_D( IX,IALP_D ) 
+            END IF
+        ELSE
+! c..production terms with non-unit stoichiometry
+            ISCP_D = ICOEFF_D( NRK_D,NP_D,NCSP_D )
+            FRACN_D = SC_D( NRK_D,ISCP_D ) 
+            IF ( IX <= NUMCELLS_D ) THEN
+                CC2_D( IX,IARP_D ) = CC2_D( IX,IARP_D ) + FRACN_D   &
+                                  * EXPLIC_D( IX,IALP_D ) 
+            END IF
+        END IF
+
+220      CONTINUE      ! End loop over production terms
+
+240   CONTINUE      ! End loop over reactions
+    !########################## END RBJACOB CODE ###########################
+
+   !########################## UPDATE AFTER RBJACOB ###########################
+        DO J_D = IDIAGBEG_D, IARRAY_D( NCSP_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                CC2_D( IX,J_D ) = CC2_D( IX,J_D ) - GDTINV_D
+            END IF
+        END DO
+   !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## START RBDECOMP CODE ###########################
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  First loop of L-U decomposition 
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+   !  IF ( IY == 1 ) THEN
+      JHI2_D = JZLO_D( NCSP_D )
+      DO 100 J_D = 1, ISCHAN_D
+         IDLO_D = IDEC1LO_D( J_D,NCSP_D )
+         IDHI_D = IDEC1HI_D( J_D,NCSP_D )
+         DO IC_D = IDLO_D, IDHI_D
+            IJ0_D = IJDECA_D( IC_D )
+            IJ1_D = IJDECB_D( IC_D )
+            IK0_D = IKDECA_D( IC_D )
+            IK1_D = IKDECB_D( IC_D )
+            KJ0_D = KJDECA_D( IC_D )
+            KJ1_D = KJDECB_D( IC_D  )
+            IF ( IX <= NUMCELLS_D ) THEN
+               ! if (ix == 1) then
+               !    print *, 'before: ', ix, IJ0_D, IJ1_D
+               ! end if
+               CC2_D( IX,IJ0_D ) = CC2_D( IX,IJ0_D )    &
+                                - CC2_D( IX,IK0_D ) * CC2_D( IX,KJ0_D )
+               CC2_D( IX,IJ1_D ) = CC2_D( IX,IJ1_D )    &
+                                - CC2_D( IX,IK1_D ) * CC2_D( IX,KJ1_D )
+               ! if (ix == 1) then
+               !    print *, 'after: ', CC2_D( IX,IJ0_D ), CC2_D( IX,IJ1_D )
+               ! end if
+            END IF
+         END DO
+! c...vdiag = 1 / current diagonal term of the decomposed matrix
+         IAR_D = JARRAYPT_D( J_D, J_D, NCSP_D )
+         IF ( IX <= NUMCELLS_D ) THEN
+            VDIAG_D( IX,J_D )  = 1.0D0 / CC2_D( IX,IAR_D )
+         END IF
+   
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Second loop of decompostion. The elements of L are divided by the
+! c  diagonal element, and the process is divided into parts to improve
+! c  vectorization.
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+         JLO1_D = JHI2_D + 1
+         JHI1_D = JHI2_D + JHIZ1_D( J_D, NCSP_D ) 
+         JLO2_D = JHI1_D + 1 
+         JHI2_D = JHI1_D + JHIZ2_D( J_D, NCSP_D )
+         
+! c...do 2 terms at a time
+         DO JC_D = JLO1_D, JHI1_D
+            IJA_D = JZEROA_D( JC_D )
+            IJB_D = JZEROB_D( JC_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+               CC2_D( IX,IJA_D ) = CC2_D( IX,IJA_D ) * VDIAG_D( IX,J_D )  
+               CC2_D( IX,IJB_D ) = CC2_D( IX,IJB_D ) * VDIAG_D( IX,J_D )  
+            END IF
+            
+         END DO
+ 
+! c...do 1 term at a time 
+         DO JC_D = JLO2_D, JHI2_D 
+            IJA_D = JZEROA_D( JC_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+               CC2_D( IX,IJA_D ) = CC2_D( IX,IJA_D ) * VDIAG_D( IX,J_D )
+               ! if (ix == 1) then
+               !    print *, 'after: ', CC2_D( IX,IJA_D )
+               ! end if
+            END IF
+         END DO
+100   CONTINUE
+   !  END IF
+    !########################## END RBDECOMP CODE ###########################
+
+    !########################## UPDATE RBDECOMP CODE ###########################
+    ! c..stage 1
+        DO N_D = 1, N_SPEC_D
+            IF ( IX <= NUMCELLS_D ) THEN
+                K1_D( IX,N_D ) = -YDOT_D( IX,N_D )
+                RHS_D( IX,N_D ) = -YDOT_D( IX,N_D )
+            END IF
+        END DO
+        ! RHS_D = K1_D      ! NOTE THIS  
+    !########################## END UPDATE RBDECOMP CODE ###########################
+
+
+    !########################## START RBSOLVE CODE ###########################
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substition loop 1
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      IJ_D = 1 
+      DO 60 I_D = 1, ISCHAN_D
+      
+! c.....sum 5 terms at a time
+         DO JZ_D = 1, KZHI0_D( I_D, NCSP_D ), 5     
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5      
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * RHS_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * RHS_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * RHS_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * RHS_D( IX,J4_D )
+            END IF
+         END DO
+   
+! c.....sum 2 terms at a time
+         DO JZ_D = KZLO1_D( I_D,NCSP_D ), KZHI1_D( I_D,NCSP_D ), 2    
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2       
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * RHS_D( IX,J1_D )
+            END IF
+         END DO
+   
+! c.....sum 1 term at a time
+         DO JZ_D = KZLO2_D( I_D,NCSP_D ), KZILCH_D( I_D,NCSP_D )    
+            IJ0_D = IJ_D
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1        
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX,J_D )
+            END IF
+         END DO
+60    CONTINUE
+  
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substitution loop 2
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      DO 180 I_D = ISCHAN_D, 1, -1
+
+! c...sum 5 terms at a time
+         DO JZ_D = 1, MZHI0_D( I_D,NCSP_D ), 5   
+            IJ0_D = IJ_D
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * RHS_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * RHS_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * RHS_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * RHS_D( IX,J4_D )
+            END IF
+         END DO
+  
+! c...sum 2 terms at a time
+         DO JZ_D = MZLO1_D( I_D,NCSP_D ), MZHI1_D( I_D,NCSP_D ), 2 
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2 
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * RHS_D( IX,J1_D ) 
+            END IF
+         END DO
+ 
+! c...sum 1 term at a time
+         DO JZ_D = MZLO2_D( I_D,NCSP_D ), MZILCH_D( I_D,NCSP_D ) 
+            IJ0_D = IJ_D 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1  
+            IF ( IX <= NUMCELLS_D ) THEN
+               RHS_D( IX,I_D ) = RHS_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * RHS_D( IX,J_D ) 
+            END IF
+         END DO
+
+! c...adjust diagonal element
+         IF ( IX <= NUMCELLS_D ) THEN
+            RHS_D( IX,I_D ) = RHS_D( IX,I_D ) * VDIAG_D( IX,I_D )
+         END IF
+180   CONTINUE
+    !########################## END RBSOLVE CODE ###########################
+
+    K1_D = RHS_D        ! NOTE THIS IS HARD CODED
+    
+    !########################## UPDATE RBSOLVE CODE ###########################
+    ! c..stage 2
+        DO N_D = 1, N_SPEC_D
+            IF ( IX <= NUMCELLS_D ) THEN
+                YP_D( IX,N_D ) = YIN_D( IX,N_D ) + K1_D( IX,N_D )
+            END IF
+            ! IF ( IX == 1 ) THEN
+            !     PRINT *, YP_D( IX, N_D ), YIN_D( IX,N_D ), K1_D( IX,N_D )
+            ! END IF
+        END DO    
+    !########################## END UPDATE RBSOLVE CODE ###########################
+
+
+    !##################### START RBFEVAL CODE ###########################
+    DO ISP_D = 1, ISCHAN_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            YDOT_D( IX, ISP_D ) = 0.0D0
+        END IF
+    END DO
+ 
+    ! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    ! c  Loop over reactions to calculate dc/dt
+    ! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
+    DO NRX_D = 1, NUSERAT_D( NCS2_D )
+    ! if (iz <= NUSERAT_D( NCS2_D )) then
+        NRK_D = NKUSERAT_D( NRX_D,NCSP_D )
+        ! IF (IX .EQ. 1) THEN
+        !     PRINT *, 'NRK_D OF 1', NRK_D
+        ! ELSE IF (IX .EQ. 2) THEN
+        !     PRINT *, 'NRK_D OF 2', NRK_D
+        ! END IF
+    ! c..Calculate reaction rate
+        IF ( NREACT_D( NRK_D ) .EQ. 1 ) THEN
+            ISP1_D = IRM2_D( NRK_D, 1, NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YP_D( IX,ISP1_D )
+            END IF
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 2 ) THEN
+            ISP1_D = IRM2_D( NRK_D,1,NCS_D )
+            ISP2_D = IRM2_D( NRK_D,2,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YP_D( IX,ISP1_D )    &
+                                    * YP_D( IX,ISP2_D ) 
+            END IF
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 3 ) THEN
+            ISP1_D = IRM2_D( NRK_D,1,NCS_D )
+            ISP2_D = IRM2_D( NRK_D,2,NCS_D )
+            ISP3_D = IRM2_D( NRK_D,3,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )     &
+                                    * YP_D( IX,ISP1_D )    &
+                                    * YP_D( IX,ISP2_D )    &
+                                    * YP_D( IX,ISP3_D )
+            END IF 
+        ELSE IF ( NREACT_D( NRK_D ) .EQ. 0 ) THEN
+            IF ( IX <= NUMCELLS_D ) THEN
+                RXRAT_D( IX,NRK_D ) = RKI_D( IX,NRK_D )
+            END IF
+        END IF
+        
+    ! c..Subtract loss terms from dc/dt for this reaction 
+        DO NR_D = 1, NREACT_D( NRK_D )
+        ! if (iy <= NREACT_D(NRK_D)) then
+            ISP1_D = IRM2_D( NRK_D,NR_D,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                YDOT_D( IX,ISP1_D ) = YDOT_D( IX,ISP1_D )   &
+                                    - RXRAT_D( IX,NRK_D )
+            END IF
+        END DO
+
+    ! c..Add production terms to dc/dt for this reaction
+        DO NP_D = 1, NPRDCT_D( NRK_D )
+        ! if (iy <= NPRDCT_D( NRK_D )) then
+            ISP1_D = IRM2_D( NRK_D,NP_D+3,NCS_D )
+            IF ( IX <= NUMCELLS_D ) THEN
+                YDOT_D( IX,ISP1_D ) = YDOT_D( IX,ISP1_D )   &
+                                    + SC_D( NRK_D,NP_D ) * RXRAT_D( IX,NRK_D )
+            END IF
+        END DO
+    END DO
+    !##################### END RBFEVAL CODE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+        X1_D = C21_D * DTINV_D
+        DO N_D = 1, N_SPEC_D
+            IF ( IX <= NUMCELLS_D ) THEN
+                K2_D( IX,N_D ) = -YDOT_D( IX,N_D ) - X1_D * K1_D( IX,N_D )
+                ! RHS_D( IX,N_D ) = -YDOT_D( IX,N_D ) - X1_D * K1_D( IX,N_D )
+            END IF
+            ! IF (IX == 1) THEN
+            !     PRINT *, K2_D( IX, N_D )
+            ! END IF
+        END DO      
+        ! IF (IX == 1) THEN
+        !     PRINT *, X1_D, C21_D, DTINV_D
+        ! END IF
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+    ! RHS_D = K2_D
+    !########################## START RBSOLVE CODE ###########################
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substition loop 1
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      IJ_D = 1 
+      DO 120 I_D = 1, ISCHAN_D
+      
+! c.....sum 5 terms at a time
+         DO JZ_D = 1, KZHI0_D( I_D, NCSP_D ), 5     
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5      
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K2_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * K2_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * K2_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * K2_D( IX,J4_D )
+            END IF
+         END DO
+   
+! c.....sum 2 terms at a time
+         DO JZ_D = KZLO1_D( I_D,NCSP_D ), KZHI1_D( I_D,NCSP_D ), 2    
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2       
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K2_D( IX,J1_D )
+            END IF
+         END DO
+   
+! c.....sum 1 term at a time
+         DO JZ_D = KZLO2_D( I_D,NCSP_D ), KZILCH_D( I_D,NCSP_D )    
+            IJ0_D = IJ_D
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1        
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX,J_D )
+            END IF
+         END DO
+120    CONTINUE
+  
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substitution loop 2
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      DO 360 I_D = ISCHAN_D, 1, -1
+
+! c...sum 5 terms at a time
+         DO JZ_D = 1, MZHI0_D( I_D,NCSP_D ), 5   
+            IJ0_D = IJ_D
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K2_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * K2_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * K2_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * K2_D( IX,J4_D )
+            END IF
+         END DO
+  
+! c...sum 2 terms at a time
+         DO JZ_D = MZLO1_D( I_D,NCSP_D ), MZHI1_D( I_D,NCSP_D ), 2 
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2 
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K2_D( IX,J1_D ) 
+            END IF
+         END DO
+ 
+! c...sum 1 term at a time
+         DO JZ_D = MZLO2_D( I_D,NCSP_D ), MZILCH_D( I_D,NCSP_D ) 
+            IJ0_D = IJ_D 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1  
+            IF ( IX <= NUMCELLS_D ) THEN
+               K2_D( IX,I_D ) = K2_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K2_D( IX,J_D ) 
+            END IF
+         END DO
+
+! c...adjust diagonal element
+         IF ( IX <= NUMCELLS_D ) THEN
+            K2_D( IX,I_D ) = K2_D( IX,I_D ) * VDIAG_D( IX,I_D )
+         END IF
+360   CONTINUE
+    !########################## END RBSOLVE CODE ###########################
+
+!     ! K2_D = RHS_D
+
+    !########################## UPDATE AFTER RBSOLVE ###########################    
+    ! c..stage 3
+    X1_D = C31_D * DTINV_D
+    X2_D = C32_D * DTINV_D
+    DO N_D = 1, N_SPEC_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            K3_D( IX,N_D ) = -YDOT_D( IX,N_D ) - X1_D * K1_D( IX,N_D )   &
+                            - X2_D * K2_D( IX, N_D )
+            ! RHS_D( IX,N_D ) = -YDOT_D( IX,N_D ) - X1_D * K1_D( IX,N_D )   &
+            !                 - X2_D * K2_D( IX, N_D )
+        END IF
+    END DO
+    !########################## END UPDATE AFTER RBSOLVE ###########################   
+
+    !########################## START RBSOLVE CODE ###########################
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substition loop 1
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      IJ_D = 1 
+      DO I_D = 1, ISCHAN_D
+      
+! c.....sum 5 terms at a time
+         DO JZ_D = 1, KZHI0_D( I_D, NCSP_D ), 5     
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5      
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K3_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * K3_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * K3_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * K3_D( IX,J4_D )
+            END IF
+         END DO
+   
+! c.....sum 2 terms at a time
+         DO JZ_D = KZLO1_D( I_D,NCSP_D ), KZHI1_D( I_D,NCSP_D ), 2    
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2       
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K3_D( IX,J1_D )
+            END IF
+         END DO
+   
+! c.....sum 1 term at a time
+         DO JZ_D = KZLO2_D( I_D,NCSP_D ), KZILCH_D( I_D,NCSP_D )    
+            IJ0_D = IJ_D
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1        
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX,J_D )
+            END IF
+         END DO
+    END DO
+  
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+! c  Back-substitution loop 2
+! cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      DO I_D = ISCHAN_D, 1, -1
+
+! c...sum 5 terms at a time
+         DO JZ_D = 1, MZHI0_D( I_D,NCSP_D ), 5   
+            IJ0_D = IJ_D
+            IJ1_D = IJ_D + 1
+            IJ2_D = IJ_D + 2 
+            IJ3_D = IJ_D + 3 
+            IJ4_D = IJ_D + 4 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            J2_D  = KZERO_D( IJ2_D,NCSP_D )
+            J3_D  = KZERO_D( IJ3_D,NCSP_D )
+            J4_D  = KZERO_D( IJ4_D,NCSP_D )
+            IJ_D  = IJ_D + 5
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K3_D( IX,J1_D )    &
+                             - CC2_D( IX,IJ2_D ) * K3_D( IX,J2_D )    &
+                             - CC2_D( IX,IJ3_D ) * K3_D( IX,J3_D )    &
+                             - CC2_D( IX,IJ4_D ) * K3_D( IX,J4_D )
+            END IF
+         END DO
+  
+! c...sum 2 terms at a time
+         DO JZ_D = MZLO1_D( I_D,NCSP_D ), MZHI1_D( I_D,NCSP_D ), 2 
+            IJ0_D = IJ_D 
+            IJ1_D = IJ_D + 1
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            J1_D  = KZERO_D( IJ1_D,NCSP_D )
+            IJ_D  = IJ_D + 2 
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX, J_D )    &
+                             - CC2_D( IX,IJ1_D ) * K3_D( IX,J1_D ) 
+            END IF
+         END DO
+ 
+! c...sum 1 term at a time
+         DO JZ_D = MZLO2_D( I_D,NCSP_D ), MZILCH_D( I_D,NCSP_D ) 
+            IJ0_D = IJ_D 
+            J_D   = KZERO_D( IJ0_D,NCSP_D )
+            IJ_D  = IJ_D + 1  
+            IF ( IX <= NUMCELLS_D ) THEN
+               K3_D( IX,I_D ) = K3_D( IX,I_D )    &
+                             - CC2_D( IX,IJ0_D ) * K3_D( IX,J_D ) 
+            END IF
+         END DO
+
+! c...adjust diagonal element
+         IF ( IX <= NUMCELLS_D ) THEN
+            K3_D( IX,I_D ) = K3_D( IX,I_D ) * VDIAG_D( IX,I_D )
+         END IF
+    END DO
+    !########################## END RBSOLVE CODE ###########################
+
+!     ! K3_D = RHS_D
+
+    !########################## FINAL SOLUTION ###########################
+! c..final solution
+    DO N_D = 1, N_SPEC_D
+        IF ( IX <= NUMCELLS_D ) THEN
+            YP_D( IX,N_D ) = YIN_D( IX,N_D ) + B1_D * K1_D( IX,N_D )       &
+                          + B2_D * K2_D( IX,N_D ) + B3_D * K3_D( IX,N_D )
+        END IF
+    END DO
+    !########################## END FINAL SOLUTION ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! c..Estimate error
+         ERR_D = 0.0D+00
+         DO N_D = 1, N_SPEC_D
+            IF ( IX <= NUMCELLS_D ) THEN
+               YTOL_D = ATOL_D( N_D ) + RTOL_D( N_D ) * ABS( YP_D( IX,N_D ) )
+               ERR_D( IX ) = ERR_D( IX )                                                &
+                          + ( ( D1_D * K1_D( IX,N_D ) + D2_D * K2_D( IX,N_D )       &
+                           + D3_D * K3_D( IX,N_D ) ) / YTOL_D ) ** 2
+           END IF
+         END DO
+        
+    ! ########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    ! !########################## ESTIMATEING ERROR ###########################
+        !  MAXERR_D      = 0.0D+00
+        !  OLDERR_D      = MAXERR_D
+        !  MAX_SPC_ERR_D = 0.0D+00
+        ! IF ( IX == 1 ) THEN
+        !     PRINT *, 'RNSPEC_D', 16 ** 0.5
+        ! END IF
+        !  IF ( IX <= NUMCELLS_D ) THEN
+        !     MAXERR_D = MAX( MAXERR_D, UROUND_D, ( ERR_D( IX ) * RNSPEC_D ) ** 0.5 )
+        !     IF ( IX <= 0 ) THEN
+        !         PRINT *, 'MAXERR_D', MAXERR_D
+        !     END IF
+        !  END IF
+        ! PRINT *, 'MAXERR_D', GROW_D
+        !  DTFAC_D = 0.9D+00 / MAXERR_D ** GROW_D
+        ! PRINT *, 'MAXERR_D', DTFAC_D
+        !  IF ( MAXERR_D .LE. 1.0D+00 ) THEN
+        !     DO N_D = 1, NUMB_MECH_SPC_D
+        !         IF ( IX <= NUMCELLS_D ) THEN
+        !               YIN_D( IX,N_D ) = MAX( YP_D( IX,N_D ), CONMIN_D )
+        !         END IF
+        !         IF ( IX == 1 ) THEN
+        !             ! PRINT *, 'YIN_D', YIN_D( IX, N_D )
+        !         END IF
+        !     END DO
+
+        !     TNOW_D = TEND_D
+
+        !     IF ( LPASS_D ) THEN
+        !        DTFAC_D = MAX( FACMIN_D, MIN( DTFAC_D, FACMAX_D ) )
+        !     ELSE
+        !        DTFAC_D = MAX( FACMIN_D, MIN( DTFAC_D, FACONE_D ) )
+        !     END IF 
+            
+        !     DT_D = MIN( DTMAX_D, MAX( DTMIN_D, DTFAC_D * DT_D ) )
+        !     LPASS_D = .TRUE.
+
+        !  ELSE
+        !     ! PRINT *, 'FACMIN_D', FACMIN_D
+        !     DT_D = FACMIN_D * DT_D  
+        !     LPASS_D = .FALSE.
+
+        !  END IF
+    !########################## END ESTIMATING ERROR ###########################
+        ! PRINT *, LPASS_D
+END SUBROUTINE RBSOLVERKERNEL
+
+SUBROUTINE SETUPRBSOLVER( ISCHAN, NUMCELLS, BLKSIZE, NUMB_MECH_SPC, NCS2, NCSP, NCS, NUSERAT, NRXNS, NKUSERAT,  &
+        NREACT, MXRCT, MXPRD, IRM2, NPRDCT, YDOT, RKI, YIN, SC,                  &
+        IARRAY, MXARRAY, NDERIVP, JARRP, JPIAL, ICOEFF, MXRP, NDERIVL, JARRL, JLIAL,        &
+        MXRR, CC2, JZLO, MXCOUNT2, IDEC1LO, IDEC1HI, IJDECA, IJDECB, IKDECA, IKDECB,        &
+        KJDECA, KJDECB, JARRAYPT, JHIZ1, JHIZ2, JZEROA, JZEROB, VDIAG, KZHI0, KZERO,        &
+        KZLO1, KZHI1, KZLO2, KZILCH, MZHI0, MZHI1, MZLO2, MZILCH, N_SPEC, MZLO1,            &
+        RHS, LORDERING, MXCELLS, OFFSET, ATOL, RTOL, ERRMX2, TEND, TNOW, DT,                &
+        GDTINV, RGAM, CHEMSTEP, DTINV, IDIAGBEG, YP, C21, C31, C32,                         &
+        B1, B2, B3, ERR, D1, D2, D3, K1, K2, K3, X1, X2,                                    &
+        MAXERR, OLDERR, MAX_SPC_ERR, UROUND, RNSPEC, DTFAC, GROW, CONMIN, LPASS, FACMIN,    & 
+        FACMAX, FACONE, DTMAX, DTMIN )
+
+    USE CUDAFOR
+    IMPLICIT NONE
+
+    !##################### START RBFEVAL VARIABLES ###########################
+    ! HOST VARIABLES
+    INTEGER ISCHAN
+    INTEGER NUMCELLS
+    INTEGER BLKSIZE
+    INTEGER NUMB_MECH_SPC
+    INTEGER NCS2
+    INTEGER NCSP
+    INTEGER NCS
+    INTEGER NUSERAT( NCS2 )
+    INTEGER NRXNS
+    INTEGER NKUSERAT( NRXNS, NCS2 )
+    INTEGER NREACT( NRXNS )
+    INTEGER MXRCT
+    INTEGER MXPRD
+    INTEGER IRM2( NRXNS,MXRCT+MXPRD,NCS2 )
+    INTEGER NPRDCT( NRXNS )
+
+    REAL( 8 ), INTENT( OUT ) :: YDOT( 8000, NUMB_MECH_SPC )    ! Species rates of change, ppm/min
+    REAL( 8 ) :: RXRAT( BLKSIZE, NRXNS )
+    REAL( 8 ) :: RKI( 8000, 748 )
+    REAL( 8 ) :: YIN( 8000, NUMB_MECH_SPC )
+    REAL :: SC( NRXNS, MXPRD ) !stoichiometric coefficient
+    
+    ! DEBUG
+    INTEGER I, J
+    REAL( 8 ) :: YDOTDEB( NUMCELLS, NUMB_MECH_SPC )    ! Species rates of change, ppm/min
+    INTEGER ISTAT
+    integer count
+    real( 8 ) :: debug
+    !########################## END RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! ! LOCAL VARIABLES
+    ! INTEGER JSPC
+    ! INTEGER YLOWEPS
+    ! REAL( 8 ) :: ERRYMAX        ! Cell/species stiffness estimate
+    ! REAL( 8 ) :: DTINV          ! Inverse of time step
+
+    ! GLOBAL VARIABLES
+    LOGICAL :: LORDERING            ! Flag for reordering
+
+    INTEGER MXCELLS
+    INTEGER OFFSET !local variables of rbsolvers             ! Cell offset for blcock
+
+    REAL( 8 ) :: ATOL( NUMB_MECH_SPC )
+    REAL( 8 ) :: RTOL( NUMB_MECH_SPC )
+    REAL( 8 ) :: ERRMX2( MXCELLS )
+    REAL( 8 ) :: TEND   !local variables of rbsolvers         ! Elapsed time at end of integration step
+    REAL( 8 ) :: TNOW   !local variables of rbsolvers         ! Elapsed time at start of integration step
+    REAL( 8 ) :: DT     !local variables of rbsolvers         ! Time step
+    REAL( 8 ) :: GDTINV         ! Inverse of gamma x time step
+    REAL( 8 ) :: RGAM           !PARAMETER
+    REAL( 8 ) :: CHEMSTEP      ! Chem integration interval (min)
+    REAL( 8 ) :: DTINV          ! Inverse of time step
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## RBJACOB ###########################
+    ! GLOBAL VARIABLES
+    ! INTEGER NCS2
+    INTEGER IARRAY( NCS2 ) ! No. of PD terms in I-hJ matrix
+    ! INTEGER ISCHAN
+    ! INTEGER NUMCELLS
+    ! INTEGER BLKSIZE
+    INTEGER MXARRAY
+    ! INTEGER NUSERAT( NCS2 )
+    ! INTEGER NCSP
+    ! INTEGER NREACT( NRXNS )
+    ! INTEGER NRXNS
+    ! INTEGER MXRCT
+    ! INTEGER MXPRD
+    ! INTEGER IRM2( NRXNS,MXRCT+MXPRD,NCS2 )
+    INTEGER NDERIVP( NRXNS, 2 ) ! NRXNS = 748
+    INTEGER JARRP( NRXNS,MXRP,NCS2 )
+    INTEGER JPIAL( NRXNS,MXRP,NCS2 )
+    INTEGER ICOEFF( NRXNS,MXRP,NCS2 )
+    ! INTEGER NUMB_MECH_SPC
+    INTEGER MXRP
+    ! INTEGER NKUSERAT( NRXNS, NCS2 )
+    INTEGER NDERIVL ( NRXNS,NCS2 ) ! CHECK FOR DIMENSION
+    INTEGER JARRL( NRXNS,MXRR,NCS2 )    ! CHECK FOR DIMENSION
+    INTEGER JLIAL( NRXNS,MXRR,NCS2 )
+    INTEGER MXRR
+    ! INTEGER NCS
+    ! INTEGER ISTAT
+
+    REAL( 8 ) :: CC2( BLKSIZE,0:MXARRAY )
+    ! REAL( 8 ) :: RKI( 8000, 748 )
+    ! REAL( 8 ) :: YIN( 8000, NUMB_MECH_SPC )
+    ! REAL :: SC( NRXNS, MXPRD ) !stoichiometric coefficient
+    REAL START, FINISH, CTH1, CTH2, KER1, KER2, CTD1, CTD2
+    !########################## RBJACOB ###########################
+
+    !########################## UPDATE AFTER RBJACOB ###########################
+    INTEGER IDIAGBEG    ! Index of diagonal start in Jac array
+    !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## RBDECOMP ###########################
+    ! GLOBAL VARIABLES
+    ! INTEGER NCSP
+    ! INTEGER NCS2
+    INTEGER JZLO( NCS2 ) ! NOTE THIS DIM
+    ! INTEGER ISCHAN
+    ! INTEGER NUMB_MECH_SPC
+    INTEGER MXCOUNT2
+    INTEGER IDEC1LO( NUMB_MECH_SPC, NCS2 )
+    INTEGER IDEC1HI( NUMB_MECH_SPC, NCS2 )
+    INTEGER IJDECA( MXCOUNT2 )
+    INTEGER IJDECB( MXCOUNT2 )
+    INTEGER IKDECA( MXCOUNT2 )
+    INTEGER IKDECB( MXCOUNT2 )
+    INTEGER KJDECA( MXCOUNT2 )
+    INTEGER KJDECB( MXCOUNT2 )
+    ! INTEGER NUMCELLS
+    ! INTEGER MXARRAY
+    INTEGER JARRAYPT( NUMB_MECH_SPC, NUMB_MECH_SPC, NCS2 )
+    INTEGER JHIZ1( NUMB_MECH_SPC, NCS2 )
+    INTEGER JHIZ2( NUMB_MECH_SPC, NCS2 )
+    INTEGER JZEROA( MXARRAY )
+    INTEGER JZEROB( MXARRAY )
+    ! INTEGER BLKSIZE
+    ! INTEGER ISTAT
+
+    ! REAL( 8 ) :: CC2( BLKSIZE,0:MXARRAY )
+    REAL( 8 ) :: VDIAG( BLKSIZE, NUMB_MECH_SPC )
+    ! REAL( 8 ) :: START, FINISH
+    !########################## RBDECOMP ###########################
+
+    !########################## RBSOLVE ###########################
+    ! GLOBAL VARIABLES
+    ! INTEGER ISCHAN
+    INTEGER KZHI0( NUMB_MECH_SPC,NCS2 )
+    INTEGER KZERO( MXARRAY,NCS2 )
+    ! INTEGER NUMCELLS
+    INTEGER KZLO1( NUMB_MECH_SPC,NCS2 )
+    ! INTEGER NCSP
+    INTEGER KZHI1( NUMB_MECH_SPC,NCS2 )
+    INTEGER KZLO2( NUMB_MECH_SPC,NCS2 )
+    INTEGER KZILCH( NUMB_MECH_SPC,NCS2 )
+    INTEGER MZHI0( NUMB_MECH_SPC,NCS2 )
+    INTEGER MZHI1( NUMB_MECH_SPC,NCS2 )
+    INTEGER MZLO2( NUMB_MECH_SPC,NCS2 )
+    INTEGER MZILCH( NUMB_MECH_SPC,NCS2 )
+    ! INTEGER NUMB_MECH_SPC
+    ! INTEGER NCS2
+    ! INTEGER MXARRAY
+    ! INTEGER BLKSIZE
+    INTEGER N_SPEC
+    INTEGER MZLO1( NUMB_MECH_SPC,NCS2 )
+
+    REAL( 8 ) :: RHS( BLKSIZE,N_SPEC ) ! NOTE CHANGE THIS WHEN PUT TOGETHER. RHS IS K1, K2, AND K3 IN RBSOLVER
+    REAL( 8 ) :: K1( BLKSIZE,N_SPEC )
+    REAL( 8 ) :: K2( BLKSIZE,N_SPEC )
+    REAL( 8 ) :: K3( BLKSIZE,N_SPEC )
+    ! REAL( 8 ) :: CC2( BLKSIZE,0:MXARRAY )
+    ! REAL( 8 ) :: VDIAG( BLKSIZE, NUMB_MECH_SPC )
+    !########################## RBSOLVE ###########################
+
+    !########################## UPDATE RBSOLVE ###########################
+    REAL( 8 ) :: YP( 8000, NUMB_MECH_SPC )
+    !########################## END UPDATE RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    REAL( 8 ) :: C21
+    REAL( 8 ) :: X1
+    REAL( 8 ) :: X2
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    REAL( 8 ) :: C31
+    REAL( 8 ) :: C32
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    !c..final solution
+    REAL( 8 ) :: B1
+    REAL( 8 ) :: B2
+    REAL( 8 ) :: B3
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! GLOBAL VARIABLES
+    REAL( 8 ) :: ERR( BLKSIZE )      ! Error est for each cell
+    REAL( 8 ) :: D1
+    REAL( 8 ) :: D2
+    REAL( 8 ) :: D3
+    !########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    !########################## ESTIMATEING ERROR ###########################
+    REAL( 8 ) :: MAXERR         ! Max of cell error estimates
+    REAL( 8 ) :: OLDERR         ! OLD max error 
+    REAL( 8 ) :: MAX_SPC_ERR    ! species error in the cell
+    REAL( 8 ) :: UROUND         ! Roundoff parameter
+    REAL( 8 ) :: RNSPEC   ! Recipricol of # of species
+    REAL( 8 ) :: DTFAC          ! Time step scale factor
+    REAL( 8 ) :: GROW
+    REAL( 8 ) :: CONMIN
+    LOGICAL LPASS               ! Flag for convergence achieved
+    REAL( 8 ) :: FACMIN
+    REAL( 8 ) :: FACMAX
+    REAL( 8 ) :: FACONE
+    REAL( 8 ) :: DTMAX
+    REAL( 8 ) :: DTMIN
+    !########################## END ESTIMATING ERROR ###########################
+
+    TYPE( DIM3 ) :: GRID, TBLOCK
+    TBLOCK = DIM3( 512, 1, 1 )
+    GRID = DIM3( CEILING(REAL(BLKSIZE)/TBLOCK%X), 1, 1 )
+
+    !########################## RBFEVAL ###########################
+    ! DEVICE VARIABLES
+    INTEGER, DEVICE :: ISCHAN_D
+    INTEGER, DEVICE :: NUMCELLS_D
+    INTEGER, DEVICE :: BLKSIZE_D
+    INTEGER, DEVICE :: NUMB_MECH_SPC_D
+    INTEGER, DEVICE :: NCS2_D
+    INTEGER, DEVICE :: NCSP_D
+    INTEGER, DEVICE :: NCS_D
+    INTEGER, DEVICE :: NUSERAT_D( NCS2 )
+    INTEGER, DEVICE :: NRXNS_D
+    INTEGER, DEVICE :: NKUSERAT_D( NRXNS, NCS2 )
+    INTEGER, DEVICE :: NREACT_D( NRXNS )
+    INTEGER, DEVICE :: MXRCT_D
+    INTEGER, DEVICE :: MXPRD_D
+    INTEGER, DEVICE :: IRM2_D( NRXNS,MXRCT+MXPRD,NCS2 )
+    INTEGER, DEVICE :: NPRDCT_D( NRXNS )
+
+    REAL( 8 ), DEVICE :: YDOT_D( 8000, NUMB_MECH_SPC )
+    REAL( 8 ), DEVICE :: RXRAT_D( BLKSIZE, NRXNS )
+    REAL( 8 ), DEVICE :: RKI_D( 8000, 748 )
+    REAL( 8 ), DEVICE :: YIN_D( 8000, NUMB_MECH_SPC )
+    REAL, DEVICE :: SC_D( NRXNS, MXPRD ) !stoichiometric coefficient
+    !########################## RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! ! LOCAL VARIABLES
+    ! INTEGER JSPC
+    ! INTEGER YLOWEPS
+    ! REAL( 8 ) :: ERRYMAX        ! Cell/species stiffness estimate
+    ! REAL( 8 ) :: DTINV          ! Inverse of time step
+
+    ! GLOBAL VARIABLES
+    LOGICAL, DEVICE :: LORDERING_D            ! Flag for reordering
+
+    INTEGER, DEVICE :: MXCELLS_D
+    INTEGER, DEVICE :: OFFSET_D !local variables of rbsolvers             ! Cell offset for blcock
+
+    REAL( 8 ), DEVICE :: ATOL_D( NUMB_MECH_SPC )
+    REAL( 8 ), DEVICE :: RTOL_D( NUMB_MECH_SPC )
+    REAL( 8 ), DEVICE :: ERRMX2_D( MXCELLS )
+    REAL( 8 ), DEVICE :: TEND_D   !local variables of rbsolvers         ! Elapsed time at end of integration step
+    REAL( 8 ), DEVICE :: TNOW_D   !local variables of rbsolvers         ! Elapsed time at start of integration step
+    REAL( 8 ), DEVICE :: DT_D     !local variables of rbsolvers         ! Time step
+    REAL( 8 ), DEVICE :: GDTINV_D         ! Inverse of gamma x time step
+    REAL( 8 ), DEVICE :: RGAM_D
+    REAL( 8 ), DEVICE :: CHEMSTEP_D      ! Chem integration interval (min)
+    REAL( 8 ), DEVICE :: DTINV_D          ! Inverse of time step
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## RBJACOB ###########################
+    ! DEVICE VARIABLES
+    ! INTEGER, DEVICE :: NCS2_D
+    INTEGER, DEVICE :: IARRAY_D(  NCS2 ) ! No. of PD terms in I-hJ matrix
+    ! INTEGER, DEVICE :: ISCHAN_D
+    ! INTEGER, DEVICE :: NUMCELLS_D
+    ! INTEGER, DEVICE :: BLKSIZE_D
+    INTEGER, DEVICE :: MXARRAY_D
+    ! INTEGER, DEVICE :: NUSERAT_D( NCS2 )
+    ! INTEGER, DEVICE :: NCSP_D
+    ! INTEGER, DEVICE :: NREACT_D( NRXNS )
+    ! INTEGER, DEVICE :: NRXNS_D
+    ! INTEGER, DEVICE :: MXRCT_D
+    ! INTEGER, DEVICE :: MXPRD_D
+    ! INTEGER, DEVICE :: IRM2_D( NRXNS,MXRCT+MXPRD,NCS2 )
+    INTEGER, DEVICE :: NDERIVP_D( NRXNS, 2 ) ! NRXNS = 748
+    INTEGER, DEVICE :: JARRP_D( NRXNS,MXRP,NCS2 )
+    INTEGER, DEVICE :: JPIAL_D( NRXNS,MXRP,NCS2 )
+    INTEGER, DEVICE :: ICOEFF_D( NRXNS,MXRP,NCS2 )
+    ! INTEGER, DEVICE :: NUMB_MECH_SPC_D
+    INTEGER, DEVICE :: MXRP_D
+    ! INTEGER, DEVICE :: NKUSERAT_D( NRXNS, NCS2 )
+    INTEGER, DEVICE :: NDERIVL_D ( NRXNS,NCS2 )
+    INTEGER, DEVICE :: JARRL_D( NRXNS,MXRR,NCS2 )
+    INTEGER, DEVICE :: JLIAL_D( NRXNS,MXRR,NCS2 )
+    INTEGER, DEVICE :: MXRR_D
+    ! INTEGER, DEVICE :: NCS_D
+
+    REAL( 8 ), DEVICE :: CC2_D( BLKSIZE,0:MXARRAY )
+    ! REAL( 8 ), DEVICE :: RKI_D( 8000, 748 )
+    ! REAL( 8 ), DEVICE :: YIN_D( 8000, NUMB_MECH_SPC )
+    ! REAL, DEVICE :: SC_D( NRXNS, MXPRD ) !stoichiometric coefficient
+    !########################## RBJACOB ###########################
+
+    !########################## UPDATE AFTER RBJACOB ###########################
+    INTEGER, DEVICE :: IDIAGBEG_D    ! Index of diagonal start in Jac array
+    !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## RBDECOMP ###########################
+    ! DEVICE VARIABLES
+    ! INTEGER, DEVICE :: NCSP_D
+    ! INTEGER, DEVICE :: NCS2_D
+    INTEGER, DEVICE :: JZLO_D( NCS2 ) ! NOTE THIS DIM
+    ! INTEGER, DEVICE :: ISCHAN_D
+    ! INTEGER, DEVICE :: NUMB_MECH_SPC_D
+    INTEGER, DEVICE :: MXCOUNT2_D
+    INTEGER, DEVICE :: IDEC1LO_D( NUMB_MECH_SPC, NCS2 )
+    INTEGER, DEVICE :: IDEC1HI_D( NUMB_MECH_SPC, NCS2 )
+    INTEGER, DEVICE :: IJDECA_D( MXCOUNT2 )
+    INTEGER, DEVICE :: IJDECB_D( MXCOUNT2 )
+    INTEGER, DEVICE :: IKDECA_D( MXCOUNT2 )
+    INTEGER, DEVICE :: IKDECB_D( MXCOUNT2 )
+    INTEGER, DEVICE :: KJDECA_D( MXCOUNT2 )
+    INTEGER, DEVICE :: KJDECB_D( MXCOUNT2 )
+    ! INTEGER, DEVICE :: NUMCELLS_D
+    ! INTEGER, DEVICE :: MXARRAY_D
+    INTEGER, DEVICE :: JARRAYPT_D( NUMB_MECH_SPC, NUMB_MECH_SPC, NCS2 )
+    INTEGER, DEVICE :: JHIZ1_D( NUMB_MECH_SPC, NCS2 )
+    INTEGER, DEVICE :: JHIZ2_D( NUMB_MECH_SPC, NCS2 )
+    INTEGER, DEVICE :: JZEROA_D( MXARRAY )
+    INTEGER, DEVICE :: JZEROB_D( MXARRAY )
+    ! INTEGER, DEVICE :: BLKSIZE_D
+
+    ! REAL( 8 ), DEVICE :: CC2_D( BLKSIZE,0:MXARRAY )
+    REAL( 8 ), DEVICE :: VDIAG_D( BLKSIZE, NUMB_MECH_SPC )
+    !########################## RBDECOMP ###########################
+
+    !########################## RBSOLVE ###########################
+    ! DEVICE VARIABLES
+    ! INTEGER, DEVICE :: ISCHAN_D
+    INTEGER, DEVICE :: KZHI0_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: KZERO_D( MXARRAY,NCS2 )
+    ! INTEGER, DEVICE :: NUMCELLS_D
+    INTEGER, DEVICE :: KZLO1_D( NUMB_MECH_SPC,NCS2 )
+    ! INTEGER, DEVICE :: NCSP_D
+    INTEGER, DEVICE :: KZHI1_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: KZLO2_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: KZILCH_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: MZHI0_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: MZHI1_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: MZLO2_D( NUMB_MECH_SPC,NCS2 )
+    INTEGER, DEVICE :: MZILCH_D( NUMB_MECH_SPC,NCS2 )
+    ! INTEGER, DEVICE :: NUMB_MECH_SPC_D
+    ! INTEGER, DEVICE :: NCS2_D
+    ! INTEGER, DEVICE :: MXARRAY_D
+    ! INTEGER, DEVICE :: BLKSIZE_D
+    INTEGER, DEVICE :: N_SPEC_D
+    INTEGER, DEVICE :: MZLO1_D( NUMB_MECH_SPC,NCS2 )
+
+    REAL( 8 ), DEVICE :: RHS_D( BLKSIZE,N_SPEC ) ! NOTE CHANGE THIS WHEN PUT TOGETHER. RHS IS K1, K2, AND K3 IN RBSOLVER
+    REAL( 8 ), DEVICE :: K1_D( BLKSIZE,N_SPEC )
+    REAL( 8 ), DEVICE :: K2_D( BLKSIZE,N_SPEC )
+    REAL( 8 ), DEVICE :: K3_D( BLKSIZE,N_SPEC )
+    ! REAL( 8 ), DEVICE :: CC2_D( BLKSIZE,0:MXARRAY )
+    ! REAL( 8 ), DEVICE :: VDIAG_D( BLKSIZE, NUMB_MECH_SPC )
+    !########################## RBSOLVE ###########################
+
+    !########################## UPDATE RBSOLVE ###########################
+    REAL( 8 ), DEVICE :: YP_D( 8000, NUMB_MECH_SPC )
+    !########################## END UPDATE RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    REAL( 8 ), DEVICE :: C21_D
+    REAL( 8 ), DEVICE :: X1_D
+    REAL( 8 ), DEVICE :: X2_D
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    REAL( 8 ), DEVICE :: C31_D
+    REAL( 8 ), DEVICE :: C32_D
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    !c..final solution
+    REAL( 8 ), DEVICE :: B1_D
+    REAL( 8) , DEVICE :: B2_D
+    REAL( 8 ), DEVICE :: B3_D
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! GLOBAL VARIABLES
+    REAL( 8 ), DEVICE :: ERR_D( BLKSIZE )      ! Error est for each cell
+    REAL( 8 ), DEVICE :: D1_D
+    REAL( 8 ), DEVICE :: D2_D
+    REAL( 8 ), DEVICE :: D3_D
+    !########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    !########################## ESTIMATEING ERROR ###########################
+    REAL( 8 ), DEVICE :: MAXERR_D         ! Max of cell error estimates
+    REAL( 8 ), DEVICE :: OLDERR_D         ! OLD max error 
+    REAL( 8 ), DEVICE :: MAX_SPC_ERR_D    ! species error in the cell
+    REAL( 8 ), DEVICE :: UROUND_D         ! Roundoff parameter
+    REAL( 8 ), DEVICE :: RNSPEC_D   ! Recipricol of # of species
+    REAL( 8 ), DEVICE :: DTFAC_D          ! Time step scale factor
+    REAL( 8 ), DEVICE :: GROW_D
+    REAL( 8 ), DEVICE :: CONMIN_D
+    LOGICAL, DEVICE :: LPASS_D               ! Flag for convergence achieved
+    REAL( 8 ), DEVICE :: FACMIN_D
+    REAL( 8 ), DEVICE :: FACMAX_D
+    REAL( 8 ), DEVICE :: FACONE_D
+    REAL( 8 ), DEVICE :: DTMAX_D
+    REAL( 8 ), DEVICE :: DTMIN_D
+    !########################## END ESTIMATING ERROR ###########################
+
+    CALL CPU_TIME( START )
+    CALL CPU_TIME( CTD1 )
+    !########################## RBFEVAL ###########################
+    ! COPY TO DEVICE
+    ISCHAN_D = ISCHAN
+    NUMCELLS_D = NUMCELLS
+    BLKSIZE_D = BLKSIZE
+    NUMB_MECH_SPC_D = NUMB_MECH_SPC
+    NCS2_D = NCS2
+    NCSP_D = NCSP
+    NCS_D = NCS
+    NUSERAT_D = NUSERAT
+    NRXNS_D = NRXNS
+    NKUSERAT_D = NKUSERAT
+    NREACT_D = NREACT
+    MXRCT_D = MXRCT
+    MXPRD_D = MXPRD
+    IRM2_D = IRM2
+    NPRDCT_D = NPRDCT
+
+    YDOT_D = YDOT
+    RXRAT_D = RXRAT
+    RKI_D = RKI
+    YIN_D = YIN
+    SC_D = SC
+    !########################## RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! COPY TO DEVICE
+    ! INTEGER JSPC
+    ! INTEGER YLOWEPS
+    ! REAL( 8 ) :: ERRYMAX        ! Cell/species stiffness estimate
+    ! REAL( 8 ) :: DTINV          ! Inverse of time step
+
+    ! GLOBAL VARIABLES
+    LORDERING_D = LORDERING
+    MXCELLS_D = MXCELLS
+    OFFSET_D = OFFSET
+    ATOL_D = ATOL
+    RTOL_D = RTOL
+    ERRMX2_D = ERRMX2
+    TEND_D = TEND
+    TNOW_D = TNOW
+    DT_D = DT
+    GDTINV_D = GDTINV
+    RGAM_D = RGAM
+    CHEMSTEP_D = CHEMSTEP
+    DTINV_D = DTINV
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBJACOB ###########################
+    ! COPY TO DEVICE
+    IDIAGBEG_D =  IDIAGBEG   ! Index of diagonal start in Jac array
+    !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## RBJACOB ###########################
+    ! COPY TO DEVICE
+    ! NCS2_D = NCS2
+    IARRAY_D = IARRAY
+    ! ISCHAN_D = ISCHAN
+    ! NUMCELLS_D = NUMCELLS
+    ! BLKSIZE_D = BLKSIZE
+    MXARRAY_D = MXARRAY
+    ! NUSERAT_D = NUSERAT
+    ! NCSP_D = NCSP
+    ! NREACT_D = NREACT
+    ! NRXNS_D = NRXNS
+    ! MXRCT_D = MXRCT
+    ! MXPRD_D = MXPRD
+    ! IRM2_D = IRM2
+    NDERIVP_D = NDERIVP
+    JARRP_D = JARRP
+    JPIAL_D = JPIAL
+    ICOEFF_D = ICOEFF
+    ! NUMB_MECH_SPC_D = NUMB_MECH_SPC
+    MXRP_D = MXRP
+    ! NKUSERAT_D = NKUSERAT
+    NDERIVL_D = NDERIVL
+    JARRL_D = JARRL
+    JLIAL_D = JLIAL
+    MXRR_D = MXRR
+    ! NCS_D = NCS
+    CC2_D = CC2
+    ! RKI_D = RKI
+    ! YIN_D = YIN
+    ! SC_D = SC
+    !########################## RBJACOB ###########################
+
+    !########################## RBDECOMP ###########################
+    ! COPY TO DEVICE
+    ! NCSP_D = NCSP
+    ! NCS2_D = NCS2
+    JZLO_D = JZLO
+    ! ISCHAN_D = ISCHAN
+    ! NUMB_MECH_SPC_D = NUMB_MECH_SPC
+    MXCOUNT2_D = MXCOUNT2
+    IDEC1LO_D = IDEC1LO
+    IDEC1HI_D = IDEC1HI
+    IJDECA_D = IJDECA
+    IJDECB_D = IJDECB
+    IKDECA_D = IKDECA
+    IKDECB_D = IKDECB
+    KJDECA_D = KJDECA
+    KJDECB_D = KJDECB
+    ! NUMCELLS_D = NUMCELLS
+    ! MXARRAY_D = MXARRAY
+    JARRAYPT_D = JARRAYPT
+    JHIZ1_D = JHIZ1
+    JHIZ2_D = JHIZ2
+    JZEROA_D = JZEROA
+    JZEROB_D = JZEROB
+    ! CC2_D = CC2
+    VDIAG_D = VDIAG
+    ! BLKSIZE_D = BLKSIZE
+    !########################## RBDECOMP ###########################
+
+    !########################## RBSOLVE ###########################
+    ! COPY TO DEVICE
+    ! ISCHAN_D = ISCHAN
+    KZHI0_D = KZHI0
+    KZERO_D = KZERO
+    ! NUMCELLS_D = NUMCELLS
+    KZLO1_D = KZLO1
+    ! NCSP_D = NCSP
+    KZHI1_D = KZHI1
+    KZLO2_D = KZLO2
+    KZILCH_D = KZILCH
+    MZHI0_D = MZHI0
+    MZHI1_D = MZHI1
+    MZLO2_D = MZLO2
+    MZILCH_D = MZILCH
+    ! NUMB_MECH_SPC_D = NUMB_MECH_SPC
+    ! NCS2_D = NCS2
+    ! MXARRAY_D = MXARRAY
+    ! BLKSIZE_D = BLKSIZE
+    N_SPEC_D = N_SPEC
+    MZLO1_D = MZLO1
+    RHS_D = RHS
+    K1_D = K1
+    K2_D = K2
+    K3_D = K3
+    ! CC2_D = CC2
+    ! VDIAG_D = VDIAG
+    ! print *, 'DT: ', DT
+    !########################## RBSOLVE ###########################
+
+    !########################## UPDATE RBSOLVE ###########################
+    ! COPY TO DEVICE
+    YP_D = YP
+    !########################## END UPDATE RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! COPY TO DEVICE
+    C21_D = C21
+    X1_D = X1
+    X2_D = X2
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    ! COPY TO HOST
+    C31_D = C31
+    C32_D = C32
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    ! COPY TO DEVICE
+    !c..final solution
+    B1_D = B1
+    B2_D = B2
+    B3_D = B3
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! COPY TO DEVICE
+    ! GLOBAL VARIABLES
+    ERR_D = ERR     ! Error est for each cell
+    D1_D = D1
+    D2_D = D2
+    D3_D = D3
+    !########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    !########################## ESTIMATEING ERROR ###########################
+    MAXERR_D = MAXERR         ! Max of cell error estimates
+    OLDERR_D = OLDERR        ! OLD max error 
+    MAX_SPC_ERR_D = MAX_SPC_ERR   ! species error in the cell
+    UROUND_D = UROUND         ! Roundoff parameter
+    RNSPEC_D = RNSPEC   ! Recipricol of # of species
+    DTFAC_D = DTFAC        ! Time step scale factor
+    GROW_D = GROW
+    CONMIN_D = CONMIN
+    LPASS_D = LPASS               ! Flag for convergence achieved
+    FACMIN_D = FACMIN
+    FACMAX_D = FACMAX
+    FACONE_D = FACONE
+    DTMAX_D = DTMAX
+    DTMIN_D = DTMIN
+    !########################## END ESTIMATING ERROR ###########################
+    CALL CPU_TIME( CTD2 )
+    CALL CPU_TIME( FINISH )
+    PRINT *, 'COPY TO DEVICE TIME: ', FINISH - START
+    
+    ! WRITE TO DAT FILE
+    ! open(newunit=1,access='sequential',file='plot.txt',position='append',status='old',action='write')
+    ! Open(unit=031,file='ctd.dat',form='formatted',status='unknown',access='append')
+
+    ! ! OPEN(1, FILE = 'CTH.DAT', STATUS='OLD')
+    ! WRITE(031,*) FINISH - START, finish - start
+    ! CLOSE(031)
+    CALL CPU_TIME( START )
+    CALL CPU_TIME( KER1 )
+    ISTAT = cudaDeviceSynchronize()
+    CALL RBSOLVERKERNEL<<<GRID, TBLOCK>>>( ISCHAN_D, NUMCELLS_D, BLKSIZE_D, NUMB_MECH_SPC_D, NCS2_D, NCSP_D, NCS_D, NUSERAT_D, NRXNS_D, NKUSERAT_D,  &
+        NREACT_D, MXRCT_D, MXPRD_D, IRM2_D, NPRDCT_D, YDOT_D, RXRAT_D, RKI_D, YIN_D, SC_D,                      &
+        IARRAY_D, MXARRAY_D, NDERIVP_D, JARRP_D, JPIAL_D, ICOEFF_D, MXRP_D, NDERIVL_D, JARRL_D, JLIAL_D,        &
+        MXRR_D, CC2_D, JZLO_D, MXCOUNT2_D, IDEC1LO_D, IDEC1HI_D, IJDECA_D, IJDECB_D, IKDECA_D, IKDECB_D,        &
+        KJDECA_D, KJDECB_D, JARRAYPT_D, JHIZ1_D, JHIZ2_D, JZEROA_D, JZEROB_D, VDIAG_D, KZHI0_D, KZERO_D,        &
+        KZLO1_D, KZHI1_D, KZLO2_D, KZILCH_D, MZHI0_D, MZHI1_D, MZLO2_D, MZILCH_D, N_SPEC_D, MZLO1_D,            &
+        RHS_D, LORDERING_D, MXCELLS_D, OFFSET_D, ATOL_D, RTOL_D, ERRMX2_D, TEND_D, TNOW_D, DT_D,                &
+        GDTINV_D, RGAM_D, CHEMSTEP_D, DTINV_D, IDIAGBEG_D, K1_D, K2_D, K3_D, YP_D, C21_D, C31_D, C32_D,         &
+        B1_D, B2_D, B3_D, ERR_D, D1_D, D2_D, D3_D, X1_D, X2_D,                                                  &
+        MAXERR_D, OLDERR_D, MAX_SPC_ERR_D, UROUND_D, RNSPEC_D, DTFAC_D, GROW_D, CONMIN_D, LPASS_D, FACMIN_D,    & 
+        FACMAX_D, FACONE_D, DTMAX_D, DTMIN_D )
+
+    ISTAT = cudaDeviceSynchronize()
+    CALL CPU_TIME( KER2 )
+    CALL CPU_TIME( FINISH )
+    PRINT *, 'KERNEL TIME: ', FINISH - START
+    CALL CPU_TIME( START )
+    CALL CPU_TIME( CTH1 )
+    !########################## RBFEVAL ###########################
+    ! COPY TO HOST
+    YDOT = YDOT_D
+!     RXRAT = RXRAT_D
+!     !########################## RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! COPY TO HOST
+    ! INTEGER JSPC
+    ! INTEGER YLOWEPS
+    ! REAL( 8 ) :: ERRYMAX        ! Cell/species stiffness estimate
+    ! REAL( 8 ) :: DTINV          ! Inverse of time step
+
+    ! GLOBAL VARIABLES
+    LORDERING = LORDERING_D
+    MXCELLS = MXCELLS_D
+    OFFSET = OFFSET_D
+    ATOL = ATOL_D
+    RTOL = RTOL_D
+    ERRMX2 = ERRMX2_D
+    TEND = TEND_D
+    TNOW = TNOW_D
+    DT = DT_D
+    GDTINV = GDTINV_D
+    ! RGAM = RGAM_D
+    CHEMSTEP = CHEMSTEP_D
+    DTINV = DTINV_D
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## RBJACOB ###########################
+    ! COPY TO HOST
+    CC2 = CC2_D
+
+    ! NCS2 = NCS2_D
+    IARRAY = IARRAY_D
+    ISCHAN = ISCHAN_D
+    NUMCELLS = NUMCELLS_D
+    ! BLKSIZE = BLKSIZE_D
+    ! MXARRAY = MXARRAY_D
+    NUSERAT = NUSERAT_D
+    NCSP = NCSP_D
+    NREACT = NREACT_D
+    ! NRXNS = NRXNS_D
+    ! MXRCT = MXRCT_D
+    ! MXPRD = MXPRD_D
+    IRM2 = IRM2_D
+    NDERIVP = NDERIVP_D
+    JARRP = JARRP_D
+    JPIAL = JPIAL_D
+    ICOEFF = ICOEFF_D
+    ! NUMB_MECH_SPC = NUMB_MECH_SPC_D
+    MXRP = MXRP_D
+    NKUSERAT = NKUSERAT_D
+    NDERIVL = NDERIVL_D
+    JARRL = JARRL_D
+    JLIAL = JLIAL_D
+    MXRR = MXRR_D
+    ! NCS = NCS_D
+    RKI = RKI_D
+    YIN = YIN_D
+    SC = SC_D
+    !########################## RBJACOB ###########################
+
+    !########################## UPDATE AFTER RBJACOB ###########################
+    ! COPY TO HOST
+    IDIAGBEG =  IDIAGBEG_D   ! Index of diagonal start in Jac array
+    !########################## END UPDATE AFTER RBJACOB ###########################
+
+    !########################## RBDECOMP ###########################
+    ! COPY TO HOST
+    ! NCSP = NCSP_D
+   !  NCS2 = NCS2_D
+    JZLO = JZLO_D
+    ! ISCHAN = ISCHAN_D
+   !  NUMB_MECH_SPC = NUMB_MECH_SPC_D
+    MXCOUNT2 = MXCOUNT2_D
+    IDEC1LO = IDEC1LO_D
+    IDEC1HI = IDEC1HI_D
+    IJDECA = IJDECA_D
+    IJDECB = IJDECB_D
+    IKDECA = IKDECA_D
+    IKDECB = IKDECB_D
+    KJDECA = KJDECA_D
+    KJDECB = KJDECB_D
+    ! NUMCELLS = NUMCELLS_D
+   !  MXARRAY = MXARRAY_D
+    JARRAYPT = JARRAYPT_D
+    JHIZ1 = JHIZ1_D
+    JHIZ2 = JHIZ2_D
+    JZEROA = JZEROA_D
+    JZEROB = JZEROB_D
+    VDIAG = VDIAG_D
+   !  BLKSIZE = BLKSIZE_D
+    !########################## RBDECOMP ###########################
+
+    !########################## RBSOLVE ###########################
+    ! COPY TO HOST
+    ! ISCHAN = ISCHAN_D
+    KZHI0 = KZHI0_D
+    KZERO = KZERO_D
+    ! NUMCELLS = NUMCELLS_D
+    KZLO1 = KZLO1_D
+    ! NCSP = NCSP_D
+    KZHI1 = KZHI1_D
+    KZLO2 = KZLO2_D
+    KZILCH = KZILCH_D
+    MZHI0 = MZHI0_D
+    MZHI1 = MZHI1_D
+    MZLO2 = MZLO2_D
+    MZILCH = MZILCH_D
+    ! NUMB_MECH_SPC = NUMB_MECH_SPC_D
+    ! NCS2 = NCS2_D
+    ! MXARRAY = MXARRAY_D
+    ! BLKSIZE = BLKSIZE_D
+    N_SPEC = N_SPEC_D
+    MZLO1 = MZLO1_D
+    RHS = RHS_D
+    K1 = K1_D
+    K2 = K2_D
+    K3 = K3_D
+    ! CC2 = CC2_D
+    ! VDIAG = VDIAG_D
+    !########################## RBSOLVE ###########################
+
+    !########################## UPDATE RBSOLVE ###########################
+    ! COPY TO HOST
+    YP = YP_D
+    !########################## END UPDATE RBSOLVE ###########################
+
+    !########################## UPDATE AFTER RBFEVAL ###########################
+    ! COPY TO HOST
+    ! C21 = C21_D
+    X1 = X1_D
+    X2 = X2_D
+    !########################## END UPDATE AFTER RBFEVAL ###########################
+
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    ! COPY TO HOST
+    ! C31_D = C31
+    ! C32_D = C32
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+    
+    !########################## UPDATE AFTER RBSOLVE ###########################
+    ! ! COPY TO HOST
+    ! !c..final solution
+    ! B1 = B1_D
+    ! B2 = B2_D
+    ! B3 = B3_D
+    !########################## END UPDATE AFTER RBSOLVE ###########################
+
+    !########################## UPDATE AFTER FINAL SOLUTION ###########################
+    ! COPY TO DEVICE
+    ! GLOBAL VARIABLES
+    ERR = ERR_D     ! Error est for each cell
+    ! D1 = D1_D
+    ! D2 = D2_D
+    ! D3 = D3_D
+    !########################## END UPDATE AFTER FINAL SOLUTION ###########################
+
+    !########################## ESTIMATEING ERROR ###########################
+    MAXERR = MAXERR_D         ! Max of cell error estimates
+    OLDERR = OLDERR_D        ! OLD max error 
+    MAX_SPC_ERR = MAX_SPC_ERR_D   ! species error in the cell
+    ! UROUND = UROUND_D         ! Roundoff parameter
+    RNSPEC = RNSPEC_D   ! Recipricol of # of species
+    DTFAC = DTFAC_D        ! Time step scale factor
+    ! GROW = GROW_D
+    ! CONMIN = CONMIN_D
+    LPASS = LPASS_D               ! Flag for convergence achieved
+    ! FACMIN = FACMIN_D
+    ! FACMAX = FACMAX_D
+    ! FACONE = FACONE_D
+    ! DTMAX = DTMAX_D
+    ! DTMIN = DTMIN_D
+    !########################## END ESTIMATING ERROR ###########################
+    CALL CPU_TIME( CTH2 )
+    CALL CPU_TIME( FINISH )
+    PRINT *, 'COPTY TO HOST TIME: ', FINISH - START
+
+    ! Open(unit=031,file='8000_GPUV2.dat',form='formatted',status='unknown',access='append')
+    ! WRITE(031,*) CTD2 - CTD1, KER2 - KER1, CTH2 - CTH1
+    ! CLOSE(031)
+
+    RETURN
+END SUBROUTINE SETUPRBSOLVER
